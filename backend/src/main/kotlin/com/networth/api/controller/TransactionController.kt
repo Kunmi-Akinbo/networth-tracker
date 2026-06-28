@@ -1,19 +1,23 @@
 package com.networth.api.controller
 
+import com.networth.api.dto.CsvImportResponse
 import com.networth.api.dto.TransactionRequest
 import com.networth.api.dto.TransactionResponse
+import com.networth.api.service.CsvParserService
 import com.networth.api.service.TransactionService
 import jakarta.validation.Valid
 import org.springframework.format.annotation.DateTimeFormat
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.multipart.MultipartFile
 import java.time.LocalDate
 
 @RestController
 @RequestMapping("/api/transactions")
 class TransactionController(
-    private val transactionService: TransactionService
+    private val transactionService: TransactionService,
+    private val csvParserService: CsvParserService
 ) {
 
     @PostMapping
@@ -60,5 +64,37 @@ class TransactionController(
     fun deleteTransaction(@PathVariable id: Long): ResponseEntity<Void> {
         transactionService.deleteTransaction(id)
         return ResponseEntity.noContent().build()
+    }
+
+    @PostMapping("/import")
+    fun importTransactionsFromCsv(
+        @RequestParam accountId: Long,
+        @RequestParam file: MultipartFile
+    ): ResponseEntity<CsvImportResponse> {
+        val csvContent = String(file.bytes)
+        val parseResult = csvParserService.parseTransactions(csvContent)
+
+        val transactionIds = mutableListOf<Long>()
+        val errors = mutableListOf<String>()
+
+        for (transactionRequest in parseResult.transactions) {
+            try {
+                val response = transactionService.createTransaction(accountId, transactionRequest)
+                transactionIds.add(response.id)
+            } catch (e: Exception) {
+                errors.add("Failed to create transaction: ${e.message}")
+            }
+        }
+
+        errors.addAll(parseResult.errors)
+
+        val importResponse = CsvImportResponse(
+            successCount = transactionIds.size,
+            errorCount = errors.size,
+            errors = errors,
+            transactionIds = transactionIds
+        )
+
+        return ResponseEntity.ok(importResponse)
     }
 }
